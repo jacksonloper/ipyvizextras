@@ -1,4 +1,121 @@
 import matplotlib.pylab as plt
+import numpy as np
+import io
+import ipywidgets
+import base64
+import PIL
+import PIL.Image
+import IPython
+
+
+class NumpyMoviesWidget:
+    def __init__(self,*movies,width=200):
+        self.movies=movies
+        self.width=width
+
+    def __call__(self):
+        ipywidgets.interact(self.loadimg_html,k=(0,len(self.movies[0].outviz)-1))
+
+    def loadimg_html(self,k):
+        s=''
+
+        s="<div style='width:%dpx'>"%(int(self.width*len(self.movies))+5)
+        for dm in self.movies:
+            s+='<img width="%f" style="display:inline-block;vertical-align:text-bottom;image-rendering: pixelated;" src="data:image/png;base64,%s"> '%(
+                    self.width,dm.loadimg_b64(k))
+
+        s+="<br />"
+
+        s+="</div>"
+
+        return IPython.display.HTML(s)
+
+class NumpyMovieWidget:
+    def __init__(self,data,colors=None,width=500,norm_per_t=True,cb=None):
+        self.width=width
+
+        self.cb=cb
+
+        if not norm_per_t:
+            data=np.array(data)
+            data=data-data.min()
+            data=data/data.max()
+
+        if colors is None:
+            colors='b'
+
+        # make colors
+        self.colors=np.zeros((len(data),3))
+        if isinstance(colors,str):
+            colors=[colors]*len(data)
+        else:
+            colors=list(colors)
+        for i,c in enumerate(colors):
+            if c=='r':
+                self.colors[i]=np.array([4,2,1])
+            elif c=='g':
+                self.colors[i]=np.array([1,2,.5])
+            elif c=='b':
+                self.colors[i]=np.array([1,2,4])
+            else:
+                raise Exception("WTF is %s"%c)
+
+        # make the raw bytes
+        self.outviz=[]
+        for i,val in enumerate(data):
+            if val is not None:
+                val=np.require(val)
+
+                if len(val.shape)==3:
+                    assert val.dtype==np.uint8
+                    self.outviz.append(val)
+                else:
+                    val=np.require(val,dtype=np.float)
+                    assert len(val.shape)==2
+                    if norm_per_t:
+                        val=val-val.min()
+                        val=val/val.max()
+
+                    FM=np.zeros((val.shape[0],val.shape[1],3))
+                    FM[:,:,0] = val *self.colors[i,0]
+                    FM[:,:,1] = val *self.colors[i,1]
+                    FM[:,:,2] = val *self.colors[i,2]
+                    FM = np.clip(FM,0,1)
+
+                    FM=np.require(FM*255,dtype=np.uint8)
+
+                    self.outviz.append(FM)
+            else:
+                self.outviz.append(np.array([[0]],dtype=np.uint8))
+
+    def __call__(self):
+        ipywidgets.interact(self.loadimg_html,k=(0,len(self.outviz)-1))
+
+    def loadimg_bytes(self,k):
+        with io.BytesIO() as output:
+            img=PIL.Image.fromarray(self.outviz[k])
+            img.save(output,'png')
+            img=output.getvalue()
+        return img
+
+    def loadimg_b64(self,k):
+        return base64.b64encode(self.loadimg_bytes(k)).decode()
+
+    def loadimg_img(self,k):
+        return IPython.display.Image(self.loadimg_bytes(k),width=self.width,height=self.height)
+
+    def loadimg_html(self,k):
+        s=''
+
+        if self.cb is not None:
+            s+="<h3>"+str(self.cb(k))+"</h3><br />"
+
+        s+='<img width="%f" style="display:inline-block;vertical-align:text-bottom;image-rendering: pixelated;" src="data:image/png;base64,%s"> '%(
+                self.width,self.loadimg_b64(k))
+
+
+
+        return IPython.display.HTML(s)
 
 class AnimAcross:
     def __init__(self,ratio=.8,sz=4,columns=None):
