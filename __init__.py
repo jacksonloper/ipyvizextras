@@ -6,6 +6,16 @@ import base64
 import PIL
 import PIL.Image
 import IPython
+import uuid
+
+
+def save_plot_as_png(**kwargs):
+    with io.BytesIO() as output:
+        plt.savefig(output,format='png',**kwargs)
+        output.seek(0)
+        s=output.read()
+    return s
+
 
 
 class NumpyMoviesWidget:
@@ -189,3 +199,85 @@ class AnimAcross:
         if exc_type is not None:
             print(exc_type,exc_val,exc_tb)
 
+
+
+
+class AnimHere:
+    def __init__(self,autorun=True,width=400,height=400,inchwidth=5,dpi=300):
+        self.imgs=[]
+        self.started=False
+        self.autorun=autorun
+        self.width=width
+        self.height=height
+        self.inchwidth=inchwidth
+        self.dpi=dpi
+
+
+
+    def __enter__(self):
+        return self
+
+    def _save(self):
+        self.imgs.append(save_plot_as_png(dpi=self.dpi))
+
+    def __invert__(self):
+        if self.started:
+            self._save()
+        else:
+            self.started=True
+        plt.clf()
+        plt.gcf().set_size_inches((self.inchwidth,self.inchwidth*self.height/self.width))
+
+    def __call__(self,s):
+        ~self;
+        plt.title(s)
+
+    def construct_widget(self):
+        slider=ipywidgets.IntSlider(min=0,max=len(self.imgs)-1)
+        img=ipywidgets.Image(width=self.width,height=self.height)
+
+        def observer(x):
+            spot=x['new']
+            img.value=self.imgs[spot]
+
+        slider.observe(observer, names='value')
+        img.value=self.imgs[0]
+
+        return ipywidgets.VBox([slider,img])
+
+    def __exit__(self,exc_type,exc_val,exc_tb):
+        self._save()
+        if exc_type is not None:
+            print(exc_type,exc_val,exc_tb)
+
+        plt.clf()
+        if self.autorun:
+            wid=self.construct_widget()
+            IPython.display.display(wid)
+
+    def html_encapsulated(self):
+        idx='animac'+str(uuid.uuid1()).replace('-','')
+        imgs=[base64.b64encode(x).decode() for x in self.imgs]
+        b64s=[('data:image/png;base64,'+imgs[i]) for i in range(len(self.imgs))]
+        b64s='["' + '","'.join(b64s) + '"]'
+
+        js=f'''
+        <div id="{idx}">
+         <input type="range" min=0 max={len(self.imgs)-1} id="{idx}-slider" oninput="{idx}SliderChange();"/>
+         <br />
+         <img id="{idx}-img" width={self.width} height={self.height}/>
+        </div>
+        <script type="text/javascript">
+        function {idx}SliderChange() {{
+            idx = '{idx}'
+            b64s={idx}images;
+            img=document.getElementById(idx+'-img');
+            slider=document.getElementById(idx+'-slider');
+            
+            img.src = b64s[slider.value%b64s.length];
+        }}
+        var {idx}images={b64s};
+        {idx}SliderChange()
+        </script>
+        '''
+        return js
