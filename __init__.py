@@ -11,7 +11,7 @@ import uuid
 
 def save_plot_as_png(**kwargs):
     with io.BytesIO() as output:
-        plt.savefig(output,format='png',**kwargs)
+        plt.savefig(output,format='png',bbox_inches='tight',**kwargs)
         output.seek(0)
         s=output.read()
     return s
