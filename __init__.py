@@ -8,7 +8,6 @@ import PIL.Image
 import IPython
 import uuid
 
-
 def save_plot_as_png(**kwargs):
     with io.BytesIO() as output:
         plt.savefig(output,format='png',bbox_inches='tight',**kwargs)
@@ -16,21 +15,57 @@ def save_plot_as_png(**kwargs):
         s=output.read()
     return s
 
-
-
 class NumpyMoviesWidget:
     def __init__(self,*movies,width=200):
         self.movies=movies
         self.width=width
+        self.N=len(self.movies[0].outviz)
 
     def __call__(self):
-        ipywidgets.interact(self.loadimg_html,k=(0,len(self.movies[0].outviz)-1))
+        ipywidgets.interact(self.loadimg_html,k=(0,self.N-1))
+
+    def html_encapsulated(self):
+        idx='nmw'+str(uuid.uuid1()).replace('-','')
+        b64s=[]
+        for i in range(len(self.movies)):
+            b64sub=[('data:image/png;base64,'+self.movies[i].loadimg_b64(k)) for k in range(self.N)]
+            b64sub='["' + '","'.join(b64sub) + '"]'
+            b64s.append(b64sub)
+        b64s='[' + ','.join(b64s)+']'
+
+        IMGS=''
+        perc=int(95/len(self.movies))
+        for i in range(len(self.movies)):
+            IMGS+=f'''<img id="{idx}-img-{i}" width="{perc}%" style="display:inline-block;vertical-align:text-bottom;image-rendering: pixelated;"/>'''
+
+        js=f'''
+        <div id="{idx}">
+         <input type="range" min=0 max={self.N-1} id="{idx}-slider" oninput="{idx}SliderChange();"/>
+         <div>{IMGS}</div>
+        </div>
+        <script type="text/javascript">
+        function {idx}SliderChange() {{
+            idx = '{idx}'
+            b64s={b64s};
+            slider=document.getElementById(idx+'-slider');            
+            for(i=0; i<{len(self.movies)}; i++) {{
+                img=document.getElementById(idx+'-img'+'-'+i);
+                img.src = b64s[i][slider.value%{self.N}];
+            }}
+        }}
+        {idx}SliderChange()
+        </script>
+        '''
+        return js
 
     def loadimg_html(self,k):
         s=''
 
         s="<div style='width:%dpx'>"%(int(self.width*len(self.movies))+5)
-        for dm in self.movies:
+        for i,dm in enumerate(self.movies):
+            if i>0 and i%2==0:
+                s+=r'<br />'
+
             s+='<img width="%f" style="display:inline-block;vertical-align:text-bottom;image-rendering: pixelated;" src="data:image/png;base64,%s"> '%(
                     self.width,dm.loadimg_b64(k))
 
@@ -40,16 +75,32 @@ class NumpyMoviesWidget:
 
         return IPython.display.HTML(s)
 
+def savefig_as_html(imgkw=None,savekw=None):
+    if savekw is None:
+        savekw={}
+    if imgkw is None:
+        imgkw={}
+
+    with io.BytesIO() as f:
+        plt.savefig(f,format='png',**savekw)
+        f.seek(0)
+        f=f.read()
+
+    imgkw['src']='data:image/png;base64,' + base64.b64encode(f).decode()
+
+    s='<img ' +" ".join([f'{x}="{imgkw[x]}"' for x in imgkw]) + '>'
+
+    return s
+
 class NumpyMovieWidget:
-    def __init__(self,data,colors=None,width=500,norm_per_t=True,cb=None):
+    def __init__(self,data,colors=None,width=500,norm_per_t=True,norm=True,labels=None):
         self.width=width
 
-        self.cb=cb
 
-        if not norm_per_t:
+        if norm and (not norm_per_t):
             data=np.array(data)
-            data=data-data.min()
-            data=data/data.max()
+            data=data-np.nanmin(data)
+            data=data/np.nanmax(data)
 
         if colors is None:
             colors='b'
@@ -83,8 +134,8 @@ class NumpyMovieWidget:
                     val=np.require(val,dtype=np.float)
                     assert len(val.shape)==2
                     if norm_per_t:
-                        val=val-val.min()
-                        val=val/val.max()
+                        val=val-np.nanmin(val)
+                        val=val/np.nanmax(val)
 
                     FM=np.zeros((val.shape[0],val.shape[1],3))
                     FM[:,:,0] = val *self.colors[i,0]
@@ -92,11 +143,49 @@ class NumpyMovieWidget:
                     FM[:,:,2] = val *self.colors[i,2]
                     FM = np.clip(FM,0,1)
 
+
+
                     FM=np.require(FM*255,dtype=np.uint8)
 
                     self.outviz.append(FM)
             else:
                 self.outviz.append(np.array([[0]],dtype=np.uint8))
+
+        if labels is None:
+            self.labels=[str(x) for x in range(len(self.outviz))]
+        else:
+            assert len(labels)==len(self.outviz)
+            self.labels=[str(x) for x in labels]
+
+    def html_encapsulated(self,imgkw):
+        idx='nmw'+str(uuid.uuid1()).replace('-','')
+        b64s=[('data:image/png;base64,'+self.loadimg_b64(i)) for i in range(len(self.outviz))]
+        b64s='["' + '","'.join(b64s) + '"]'
+
+        imgkw=' '.join([f'{x}="{imgkw[x]}"' for x in imgkw])
+
+        js=f'''
+        <div id="{idx}">
+         <input type="range" min=0 max={len(self.outviz)-1} id="{idx}-slider" oninput="{idx}SliderChange();"/>
+         <div id="{idx}-label"></div>
+         <img id="{idx}-img" {imgkw}/>
+        </div>
+        <script type="text/javascript">
+        function {idx}SliderChange() {{
+            idx = '{idx}'
+            b64s={b64s};
+            labels={self.labels};
+            img=document.getElementById(idx+'-img');
+            slider=document.getElementById(idx+'-slider');
+            label=document.getElementById(idx+'-label');
+            
+            label.innerHTML=labels[slider.value%b64s.length];
+            img.src = b64s[slider.value%b64s.length];
+        }}
+        {idx}SliderChange()
+        </script>
+        '''
+        return js
 
     def __call__(self):
         ipywidgets.interact(self.loadimg_html,k=(0,len(self.outviz)-1))
@@ -117,8 +206,7 @@ class NumpyMovieWidget:
     def loadimg_html(self,k):
         s=''
 
-        if self.cb is not None:
-            s+="<h3>"+str(self.cb(k))+"</h3><br />"
+        s+="<h3>"+self.labels[k]+"</h3><br />"
 
         s+='<img width="%f" style="display:inline-block;vertical-align:text-bottom;image-rendering: pixelated;" src="data:image/png;base64,%s"> '%(
                 self.width,self.loadimg_b64(k))
@@ -128,7 +216,8 @@ class NumpyMovieWidget:
         return IPython.display.HTML(s)
 
 class AnimAcross:
-    def __init__(self,ratio=.8,sz=4,columns=None):
+    def __init__(self,ratio=.8,sz=4,columns=None,aa=None):
+        self.aa=aa
         self.axes_list=[]
         self.cbs={}
         self.ratio=ratio
@@ -136,7 +225,10 @@ class AnimAcross:
         self.columns=columns
 
     def __enter__(self):
-        return self
+        if self.aa is not None:
+            return self.aa
+        else:
+            return self
 
     def __invert__(self):
         self.axes_list.append(plt.gcf().add_axes([0,0,self.ratio,self.ratio],label="axis%d"%len(self.axes_list)))
@@ -155,6 +247,9 @@ class AnimAcross:
         self.cbs[idx] = mappable
 
     def __exit__(self,exc_type,exc_val,exc_tb):
+        if self.aa is not None:
+            return 
+
         if self.columns is None:
             dims=[
                 (1,1), # no plots
